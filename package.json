@@ -1,0 +1,14 @@
+{
+  "name": "bible-json-dataset",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node scripts/generate/source.js",
+    "validate": "node scripts/validate.js",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
+  }
+}

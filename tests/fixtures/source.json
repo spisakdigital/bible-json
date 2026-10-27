@@ -1,0 +1,23 @@
+{
+  "version": "kjv",
+  "books": [
+    {
+      "id": "sample-book",
+      "testament": "old",
+      "name": "Sample Book",
+      "shortName": "Sample",
+      "chapters": [
+        {
+          "chapter": 1,
+          "headings": [
+            {"beforeVerse": 1, "text": "Sample heading"}
+          ],
+          "verses": [
+            {"n": 1, "text": "Sample verse one.", "poetry": true},
+            {"n": 2, "text": "Sample verse two."}
+          ]
+        }
+      ]
+    }
+  ]
+}

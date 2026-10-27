@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Books index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "version", "books"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+$"
+    },
+    "books": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "order", "testament", "name", "shortName", "chapters"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "testament": {
+            "enum": ["old", "new", "deuterocanonical"]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "shortName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "chapters": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

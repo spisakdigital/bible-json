@@ -1,0 +1,27 @@
+name: Validate dataset
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test generator and validator
+        run: npm test
+      - name: Validate complete dataset
+        if: ${{ hashFiles('data/kjv/index.json', 'data/web/index.json') != '' }}
+        run: npm run validate
+      - name: Report that no dataset is published yet
+        if: ${{ hashFiles('data/kjv/index.json', 'data/web/index.json') == '' }}
+        run: echo "No Bible dataset is included; full-data validation and releases are blocked."
