@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { textProblem, validateReleaseTag } from "../scripts/validate.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const generatorPath = path.join(repositoryRoot, "scripts", "generate", "source.js");
@@ -35,6 +36,78 @@ test("generator writes normalized chapter files only under the selected version"
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
+});
+
+test("generator removes stale files from a previous run", () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bible-json-"));
+  try {
+    const staleFile = path.join(temporaryRoot, "data", "kjv", "old-book", "1.json");
+    fs.mkdirSync(path.dirname(staleFile), { recursive: true });
+    fs.writeFileSync(staleFile, "{}\n");
+    const result = spawnSync(
+      process.execPath,
+      [generatorPath, "kjv", fixturePath, temporaryRoot],
+      { encoding: "utf8" }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.existsSync(staleFile), false);
+  } finally {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("text rules reject markup, entities, markers, and verse-number prefixes", () => {
+  assert.equal(textProblem("In the beginning God created the heaven and the earth."), null);
+  assert.equal(textProblem("Jesus wept.", { verse: true }), null);
+  for (const text of [
+    "<i>was</i> good",
+    "it was good&nbsp;indeed",
+    "\\add was\\add* good",
+    "it was good[1]",
+    "it was *good*"
+  ]) {
+    assert.match(textProblem(text), /markup or footnote marker/, text);
+  }
+  assert.match(textProblem("1 In the beginning", { verse: true }), /verse-number prefix/);
+  assert.match(textProblem(" In the beginning"), /whitespace/);
+  assert.match(textProblem("In the\nbeginning"), /control characters/);
+  assert.match(textProblem("Cafe\u0301"), /NFC/);
+});
+
+test("release tag check requires matching datasetVersion and CHANGELOG entry", () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bible-json-tag-"));
+  try {
+    fs.writeFileSync(
+      path.join(temporaryRoot, "index.json"),
+      `${JSON.stringify({ schemaVersion: 1, datasetVersion: "1.0.0", versions: [] }, null, 2)}\n`
+    );
+    fs.writeFileSync(path.join(temporaryRoot, "CHANGELOG.md"), "# Changelog\n\n## 1.0.0\n\n- First.\n");
+    assert.deepEqual(validateReleaseTag(temporaryRoot, "v1.0.0"), []);
+    assert.match(validateReleaseTag(temporaryRoot, "v1.0.1").join("\n"), /does not match tag/);
+    assert.match(validateReleaseTag(temporaryRoot, "v1.0.1").join("\n"), /CHANGELOG\.md/);
+    assert.match(validateReleaseTag(temporaryRoot, "1.0.0").join("\n"), /vMAJOR\.MINOR\.PATCH/);
+  } finally {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("repository contains no out-of-scope translations", () => {
+  const forbidden = new RegExp(`\\b(${["ESV", "ESVGSB", "SEB", "RSB"].join("|")})\\b`, "i");
+  const skipped = new Set([".git", "node_modules"]);
+  const offenders = [];
+  const walk = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (skipped.has(entry.name)) continue;
+      const fullPath = path.join(directory, entry.name);
+      if (forbidden.test(entry.name)) offenders.push(fullPath);
+      if (entry.isDirectory()) walk(fullPath);
+      else if (fullPath !== fileURLToPath(import.meta.url) && forbidden.test(fs.readFileSync(fullPath, "utf8"))) {
+        offenders.push(fullPath);
+      }
+    }
+  };
+  walk(repositoryRoot);
+  assert.deepEqual(offenders.map(file => path.relative(repositoryRoot, file)), []);
 });
 
 test("generator rejects versions outside the public-domain scope", () => {

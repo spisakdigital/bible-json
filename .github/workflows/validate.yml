@@ -25,3 +25,6 @@ jobs:
       - name: Report that no dataset is published yet
         if: ${{ hashFiles('data/kjv/index.json', 'data/web/index.json') == '' }}
         run: echo "No Bible dataset is included; full-data validation and releases are blocked."
+      - name: Check release tag against index.json and CHANGELOG.md
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: node scripts/validate.js --tag "${GITHUB_REF_NAME}"

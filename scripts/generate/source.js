@@ -1,24 +1,23 @@
 import fs from "node:fs";
 import path from "node:path";
+import { slugPattern, textProblem } from "../validate.js";
 
-const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const allowedVersions = new Set(["kjv", "web"]);
 const verseFlags = ["poetry", "paragraphStart", "wordsOfJesus"];
-const markupPattern = /<\/?[a-z][^>]*>|```|`|\*\*|__|~~|\[[^\]]+\]\([^)]+\)|\[\d+\]|\*/i;
 
 function fail(message) {
   console.error(message);
   process.exitCode = 1;
 }
 
-function requireText(value, location) {
+function requireText(value, location, options) {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${location}: expected non-empty text`);
   }
-  const normalized = value.normalize("NFC");
-  if (markupPattern.test(normalized)) {
-    throw new Error(`${location}: markup or footnote marker is not allowed`);
-  }
+  // Only whitespace and Unicode form are normalized; the words are never changed.
+  const normalized = value.normalize("NFC").replace(/\s+/g, " ").trim();
+  const problem = textProblem(normalized, options);
+  if (problem) throw new Error(`${location}: ${problem}`);
   return normalized;
 }
 
@@ -64,7 +63,7 @@ function normalizeSource(source, version) {
         }
         const normalizedVerse = {
           n: verse.n,
-          text: requireText(verse.text, `${verseLocation}.text`)
+          text: requireText(verse.text, `${verseLocation}.text`, { verse: true })
         };
         for (const flag of verseFlags) {
           if (verse[flag] === true) normalizedVerse[flag] = true;
@@ -124,6 +123,8 @@ function generate(version, sourcePath, repositoryRoot) {
   const source = JSON.parse(fs.readFileSync(absoluteSourcePath, "utf8"));
   const books = normalizeSource(source, version);
   const outputDirectory = path.resolve(repositoryRoot, "data", version);
+  // Start from an empty version directory so renamed books or removed chapters leave no stale files.
+  fs.rmSync(outputDirectory, { recursive: true, force: true });
 
   writeJson(path.join(outputDirectory, "index.json"), {
     schemaVersion: 1,

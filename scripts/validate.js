@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 
 const expectedVersions = ["kjv", "web"];
@@ -8,8 +9,23 @@ const expectedVersionMetadata = {
   kjv: "King James Version",
   web: "World English Bible"
 };
-const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const markupPattern = /<\/?[a-z][^>]*>|```|`|\*\*|__|~~|\[[^\]]+\]\([^)]+\)|\[\d+\]|\*/i;
+export const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// HTML tags and entities, Markdown, USFM markers, and bracketed footnote markers.
+export const markupPattern =
+  /<\/?[a-z][^>]*>|&(?:[a-z]+|#\d+|#x[0-9a-f]+);|```|`|\*\*|__|~~|\[[^\]]+\]\([^)]+\)|\[\d+\]|\*|\\[a-z]+\d*\*?/i;
+const verseNumberPrefixPattern = /^\d+[\s.:)]/;
+const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
+
+// Returns a description of the first rule the text breaks, or null when it is clean.
+export function textProblem(text, { verse = false } = {}) {
+  if (typeof text !== "string" || text.trim().length === 0) return "text must be non-empty";
+  if (markupPattern.test(text)) return "markup or footnote marker is not allowed";
+  if (controlCharacterPattern.test(text)) return "control characters and line breaks are not allowed";
+  if (text !== text.trim() || /\s{2,}/.test(text)) return "text has leading, trailing, or repeated whitespace";
+  if (verse && verseNumberPrefixPattern.test(text)) return "verse-number prefix is not allowed";
+  if (text.normalize("NFC") !== text) return "text must use Unicode NFC";
+  return null;
+}
 
 function relativePath(root, filePath) {
   return path.relative(root, filePath).split(path.sep).join("/") || ".";
@@ -74,14 +90,9 @@ function checkSchema(root, filePath, validate, errors) {
   return value;
 }
 
-function checkText(root, filePath, location, text, errors) {
-  if (typeof text !== "string" || text.trim().length === 0) {
-    errors.push(`${relativePath(root, filePath)} ${location}: text must be non-empty`);
-  } else if (markupPattern.test(text)) {
-    errors.push(`${relativePath(root, filePath)} ${location}: markup or footnote marker is not allowed`);
-  } else if (text.normalize("NFC") !== text) {
-    errors.push(`${relativePath(root, filePath)} ${location}: text must use Unicode NFC`);
-  }
+function checkText(root, filePath, location, text, errors, options) {
+  const problem = textProblem(text, options);
+  if (problem) errors.push(`${relativePath(root, filePath)} ${location}: ${problem}`);
 }
 
 function validateVersion(root, version, bookSchema, chapterSchema, errors) {
@@ -153,7 +164,7 @@ function validateVersion(root, version, bookSchema, chapterSchema, errors) {
             `${relativePath(root, chapterPath)} /verses/${verseIndex}/n: expected ${verseIndex + 1}`
           );
         }
-        checkText(root, chapterPath, `/verses/${verseIndex}/text`, verse.text, errors);
+        checkText(root, chapterPath, `/verses/${verseIndex}/text`, verse.text, errors, { verse: true });
       });
       for (const [headingIndex, heading] of (chapter.headings ?? []).entries()) {
         if (heading.beforeVerse > chapter.verses.length) {
@@ -247,11 +258,51 @@ export function validateDataset(repositoryRoot = process.cwd()) {
   return errors;
 }
 
-const repositoryRoot = process.argv[2] ?? process.cwd();
-const errors = validateDataset(repositoryRoot);
-if (errors.length > 0) {
-  for (const error of errors) console.error(error);
-  process.exitCode = 1;
-} else {
-  console.log(`Dataset validation passed for ${expectedVersions.join(" and ")}.`);
+// Checks that a release tag matches datasetVersion and has a CHANGELOG entry.
+export function validateReleaseTag(repositoryRoot, tag) {
+  const root = path.resolve(repositoryRoot);
+  const errors = [];
+  const match = /^v(\d+\.\d+\.\d+)$/.exec(tag);
+  if (!match) return [`tag "${tag}": expected vMAJOR.MINOR.PATCH`];
+  const version = match[1];
+  const rootIndex = readJson(root, path.join(root, "index.json"), errors);
+  if (rootIndex && rootIndex.datasetVersion !== version) {
+    errors.push(`index.json: datasetVersion "${rootIndex.datasetVersion}" does not match tag "${tag}"`);
+  }
+  const changelogPath = path.join(root, "CHANGELOG.md");
+  const changelog = fs.existsSync(changelogPath) ? fs.readFileSync(changelogPath, "utf8") : "";
+  const escaped = version.replaceAll(".", "\\.");
+  if (!new RegExp(`^## \\[?v?${escaped}\\]?(\\s|$)`, "m").test(changelog)) {
+    errors.push(`CHANGELOG.md: no "## ${version}" entry for tag "${tag}"`);
+  }
+  return errors;
+}
+
+function main(argv) {
+  const tagIndex = argv.indexOf("--tag");
+  const tag = tagIndex === -1 ? undefined : argv[tagIndex + 1];
+  const positional =
+    tagIndex === -1 ? argv : argv.filter((_, index) => index !== tagIndex && index !== tagIndex + 1);
+  const repositoryRoot = positional[0] ?? process.cwd();
+  if (tagIndex !== -1 && !tag) {
+    console.error("Usage: node scripts/validate.js [repository-root] [--tag vX.Y.Z]");
+    return 1;
+  }
+
+  const errors = tag ? validateReleaseTag(repositoryRoot, tag) : validateDataset(repositoryRoot);
+  if (errors.length > 0) {
+    for (const error of errors) console.error(error);
+    console.error(`${errors.length} error(s).`);
+    return 1;
+  }
+  console.log(
+    tag
+      ? `Release tag ${tag} matches index.json and CHANGELOG.md.`
+      : `Dataset validation passed for ${expectedVersions.join(" and ")}.`
+  );
+  return 0;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exitCode = main(process.argv.slice(2));
 }
